@@ -1,0 +1,63 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build image for smoke test
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: |
+            mubasher100/devops-quiz-ai:latest
+            mubasher100/devops-quiz-ai:${{ github.sha }}
+
+      - name: Smoke test container
+        run: |
+          docker run -d --rm --name quiz-ai-smoke -p 5000:5000 \
+            -e GEMINI_KEY=dummy-key \
+            -e STUDENT_ID=60303802 \
+            mubasher100/devops-quiz-ai:latest
+          sleep 5
+          curl --fail http://127.0.0.1:5000/api/health | grep ok
+          docker stop quiz-ai-smoke
+
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push image to Docker Hub
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            mubasher100/devops-quiz-ai:latest
+            mubasher100/devops-quiz-ai:${{ github.sha }}
+
+  deploy:
+    needs: build-test-push
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Render deploy
+        run: curl --fail --request POST "${{ secrets.RENDER_DEPLOY_URL }}"
